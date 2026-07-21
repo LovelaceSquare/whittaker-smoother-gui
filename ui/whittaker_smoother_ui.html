@@ -1,0 +1,2270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Whittaker Smoother</title>
+<style>
+/* ====================================================================
+   CSS Variables - Design System
+   ==================================================================== */
+:root {
+    --bg-primary: #E8EBED; --bg-secondary: #F2F4F6; --bg-tertiary: #EBF0F4;
+    --text-primary: #1E293B; --text-secondary: #64748B; --text-tertiary: #94A3B8;
+    --border-color: #E2E8F0;
+    --accent-primary: #42A5F5; --accent-secondary: #90CAF9;
+    --accent-gradient-start: #90CAF9; --accent-gradient-end: #64B5F6;
+    --button-bg: #F1F5F9; --button-border: #E2E8F0; --button-text: #475569;
+    --shadow-color: rgba(0, 0, 0, 0.05); --shadow-accent: rgba(100, 181, 246, 0.3);
+    --status-indicator: #10B981; --error-color: #EF4444; --warning-color: #F59E0B;
+    --spectrum-color: rgba(66, 165, 245, 1.0);
+    --smoothed-color: rgba(239, 68, 68, 0.9);
+    --result-color: rgba(16, 185, 129, 0.9);
+    --mean-spectrum-color: rgba(80, 80, 80, 1.0);
+    --all-spectra-color: rgba(160, 160, 160, 0.4);
+    --grid-color: rgba(0, 0, 0, 0.08);
+    --axis-text: #64748B;
+}
+body.dark-mode {
+    --bg-primary: #0F172A; --bg-secondary: #1E293B; --bg-tertiary: #334155;
+    --text-primary: #F1F5F9; --text-secondary: #CBD5E1; --text-tertiary: #94A3B8;
+    --border-color: #334155;
+    --accent-primary: #60A5FA; --accent-secondary: #93C5FD;
+    --accent-gradient-start: #60A5FA; --accent-gradient-end: #3B82F6;
+    --button-bg: #334155; --button-border: #475569; --button-text: #E2E8F0;
+    --shadow-color: rgba(0, 0, 0, 0.3); --shadow-accent: rgba(59, 130, 246, 0.4);
+    --status-indicator: #34D399; --error-color: #F87171; --warning-color: #FBBF24;
+    --spectrum-color: rgba(96, 165, 250, 1.0);
+    --smoothed-color: rgba(248, 113, 113, 0.9);
+    --result-color: rgba(52, 211, 153, 0.9);
+    --mean-spectrum-color: rgba(200, 200, 200, 1.0);
+    --all-spectra-color: rgba(160, 160, 160, 0.25);
+    --grid-color: rgba(255, 255, 255, 0.08);
+    --axis-text: #94A3B8;
+}
+
+/* ---- Reset ---- */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+    background: var(--bg-primary); color: var(--text-primary);
+    overflow: hidden; height: 100vh; display: flex; flex-direction: column;
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* ---- Main Layout (2-column) ---- */
+.main-content {
+    flex: 1; display: flex; gap: 0; overflow: hidden;
+}
+
+/* ---- Left Panel ---- */
+.controls-panel {
+    width: 416px; min-width: 280px; max-width: 600px;
+    background: var(--bg-secondary); border-right: 1px solid var(--border-color);
+    overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px;
+    flex-shrink: 0;
+}
+.controls-panel::-webkit-scrollbar { width: 8px; }
+.controls-panel::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 4px; }
+.post-load-controls { display: none; flex-direction: column; gap: 12px; }
+
+/* ---- Resize Handle ---- */
+.resize-handle {
+    width: 6px; cursor: col-resize; background: transparent;
+    flex-shrink: 0; position: relative; z-index: 10;
+    transition: background 0.2s ease;
+}
+.resize-handle:hover, .resize-handle.active {
+    background: var(--accent-primary);
+}
+.resize-handle::after {
+    content: ''; position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 2px; height: 32px; border-radius: 1px;
+    background: var(--border-color);
+    transition: background 0.2s ease;
+}
+.resize-handle:hover::after, .resize-handle.active::after {
+    background: white;
+}
+
+/* ---- Right Panel ---- */
+.charts-panel {
+    flex: 1; display: flex; flex-direction: column; gap: 0; padding: 8px; overflow: hidden;
+}
+
+/* ---- Section ---- */
+.section {
+    background: var(--bg-tertiary); border-radius: 14px; padding: 14px;
+    border: 1px solid var(--border-color); box-shadow: 0 1px 4px var(--shadow-color);
+}
+.section-title {
+    font-size: 13px; font-weight: 600; color: var(--text-secondary);
+    text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px;
+}
+
+/* ---- Buttons ---- */
+.btn-primary {
+    background: linear-gradient(135deg, var(--accent-gradient-start) 0%, var(--accent-gradient-end) 100%);
+    border: none; border-radius: 12px; padding: 12px 18px; color: white;
+    font-size: 16px; font-weight: 600; cursor: pointer;
+    box-shadow: 0 3px 10px var(--shadow-accent);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.btn-primary:hover { box-shadow: 0 5px 16px var(--shadow-accent); transform: translateY(-1px); }
+.btn-primary:active { transform: translateY(0); }
+.btn-primary:disabled { opacity: 0.5; cursor: default; transform: none; box-shadow: none; }
+
+.btn-secondary {
+    background: var(--button-bg); border: 1px solid var(--button-border);
+    border-radius: 12px; padding: 10px 18px; color: var(--button-text);
+    font-size: 16px; font-weight: 500; cursor: pointer; transition: all 0.2s ease;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.btn-secondary:hover { background: var(--accent-secondary); border-color: var(--accent-primary); color: var(--text-primary); transform: translateY(-1px); }
+.btn-secondary:disabled { opacity: 0.5; cursor: default; transform: none; }
+
+.btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.btn-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.btn-sm { padding: 8px 14px; font-size: 14px; border-radius: 10px; }
+
+/* ---- Parameter Box ---- */
+.param-box {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 10px;
+}
+.param-box:last-child { margin-bottom: 0; }
+
+/* ---- Slider with nudge buttons ---- */
+.slider-group { margin-bottom: 0; }
+.slider-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.slider-label { font-size: 14px; font-weight: 500; color: var(--text-secondary); }
+.slider-controls { display: flex; align-items: center; gap: 5px; }
+.slider-value {
+    font-size: 14px; font-weight: 600; color: var(--accent-primary);
+    font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+    background: var(--bg-secondary); border: 1px solid var(--border-color);
+    border-radius: 6px; padding: 3px 8px; width: 85px; text-align: right;
+}
+.slider-value:focus { outline: none; border-color: var(--accent-primary); }
+.slider-value.invalid { border-color: var(--error-color); color: var(--error-color); }
+.btn-nudge {
+    width: 24px; height: 18px; background: var(--button-bg); border: 1px solid var(--button-border);
+    border-radius: 4px; font-size: 10px; line-height: 1; cursor: pointer;
+    color: var(--text-secondary); display: flex; align-items: center; justify-content: center;
+    padding: 0; transition: all 0.15s ease;
+}
+.btn-nudge:hover { background: var(--accent-secondary); border-color: var(--accent-primary); }
+.nudge-pair { display: flex; flex-direction: column; gap: 3px; }
+.btn-gear {
+    width: 28px; height: 28px; background: var(--button-bg); border: 1px solid var(--button-border);
+    border-radius: 6px; font-size: 14px; cursor: pointer; color: var(--text-secondary);
+    display: flex; align-items: center; justify-content: center; padding: 0;
+    transition: all 0.15s ease;
+}
+.btn-gear:hover { background: var(--accent-secondary); border-color: var(--accent-primary); }
+
+input[type="range"] {
+    -webkit-appearance: none; width: 100%; height: 8px;
+    background: var(--slider-track, #CBD5E1); border-radius: 4px; outline: none;
+}
+body.dark-mode input[type="range"] { background: #475569; }
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 22px; height: 22px;
+    background: var(--accent-primary); border-radius: 50%; cursor: pointer;
+    box-shadow: 0 2px 6px rgba(66, 165, 245, 0.4); transition: all 0.2s ease;
+}
+input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
+input[type="range"]::-moz-range-thumb {
+    width: 22px; height: 22px; background: var(--accent-primary);
+    border-radius: 50%; cursor: pointer; border: none;
+}
+.slider-ticks {
+    display: flex; justify-content: space-between; margin-top: 3px;
+    font-size: 11px; color: var(--text-tertiary);
+    font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+}
+
+/* ---- Data Info ---- */
+.data-info-row {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 14px; color: var(--text-secondary); padding: 3px 0;
+}
+.data-info-label { font-weight: 500; }
+.data-info-value {
+    font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+    color: var(--text-primary); font-weight: 600;
+}
+
+/* ---- Chart Container ---- */
+.chart-container {
+    flex: 1; background: var(--bg-secondary); border-radius: 12px; padding: 8px 10px;
+    border: 1px solid var(--border-color); box-shadow: 0 1px 4px var(--shadow-color);
+    display: flex; flex-direction: column; min-height: 0; margin-bottom: 6px;
+}
+.chart-container:last-child { margin-bottom: 0; }
+.chart-header {
+    display: flex; align-items: center;
+    margin-bottom: 4px; flex-shrink: 0; position: relative;
+}
+.chart-title { font-size: 16px; font-weight: 600; color: var(--text-primary); flex-shrink: 0; }
+.chart-header-right { display: flex; align-items: center; gap: 8px; justify-content: center; flex: 1; min-width: 0; }
+.chart-wrapper { flex: 1; position: relative; min-height: 0; }
+.chart-wrapper canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+.chart-empty {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100%; color: var(--text-tertiary); font-size: 16px; font-style: italic; gap: 12px;
+}
+.chart-empty-icon { font-size: 48px; opacity: 0.4; }
+.chart-legend { display: flex; gap: 14px; font-size: 12px; color: var(--text-secondary); flex-shrink: 0; margin-top: 3px; }
+.legend-item { display: flex; align-items: center; gap: 5px; }
+.legend-swatch { width: 18px; height: 4px; border-radius: 2px; }
+
+/* ---- Burger Menu ---- */
+.dropdown { position: relative; display: inline-block; }
+.burger-menu {
+    display: none; position: absolute; top: 100%; right: 0; margin-top: 4px;
+    background: var(--bg-secondary); border: 1px solid var(--border-color);
+    border-radius: 12px; padding: 5px 0; min-width: 260px; z-index: 1000;
+    box-shadow: 0 8px 24px var(--shadow-color);
+}
+.burger-menu.show { display: block; }
+.burger-toggle {
+    padding: 10px 18px; font-size: 16px; color: var(--text-primary);
+    cursor: pointer; display: flex; align-items: center; justify-content: space-between;
+    transition: background 0.15s ease;
+}
+.burger-toggle:hover { background: var(--bg-tertiary); }
+.burger-toggle .check { color: var(--accent-primary); font-weight: 700; width: 22px; text-align: center; }
+.dropdown-item {
+    padding: 10px 18px; font-size: 16px; color: var(--text-primary);
+    cursor: pointer; transition: background 0.15s ease;
+}
+.dropdown-item:hover { background: var(--bg-tertiary); }
+.dropdown-sep { height: 1px; background: var(--border-color); margin: 5px 0; }
+
+/* ---- Status Bar ---- */
+.status-bar {
+    background: var(--bg-secondary); padding: 4px 20px;
+    border-top: 1px solid var(--border-color);
+    display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;
+}
+.status-left { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary); }
+.status-indicator {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--status-indicator); animation: pulse 2s infinite;
+}
+.status-indicator.error { background: var(--error-color); animation: none; }
+.status-indicator.processing { background: var(--warning-color); animation: pulse 1s infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+/* ---- Toast Container ---- */
+.toast-container {
+    position: fixed; top: 20px; right: 20px; z-index: 200;
+    display: flex; flex-direction: column; gap: 12px;
+}
+.toast {
+    background: var(--bg-secondary); border-radius: 14px; padding: 16px 20px;
+    border: 1px solid var(--border-color); box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+    display: flex; align-items: center; gap: 14px; min-width: 300px; max-width: 420px;
+    animation: toastSlideIn 0.3s ease;
+}
+.toast-success { border-left: 4px solid var(--status-indicator); }
+.toast-error { border-left: 4px solid var(--error-color); }
+.toast-warning { border-left: 4px solid var(--warning-color); }
+.toast-info { border-left: 4px solid var(--accent-primary); }
+.toast-icon {
+    width: 40px; height: 40px; border-radius: 50%; display: flex;
+    align-items: center; justify-content: center; font-size: 22px; flex-shrink: 0;
+}
+.toast-success .toast-icon { background: rgba(16, 185, 129, 0.15); }
+.toast-error .toast-icon { background: rgba(239, 68, 68, 0.15); }
+.toast-warning .toast-icon { background: rgba(245, 158, 11, 0.15); }
+.toast-info .toast-icon { background: rgba(66, 165, 245, 0.15); }
+.toast-content { flex: 1; }
+.toast-title { font-weight: 600; font-size: 15px; margin-bottom: 2px; }
+.toast-message { font-size: 13px; color: var(--text-secondary); }
+.toast-close {
+    background: none; border: none; color: var(--text-tertiary); cursor: pointer;
+    font-size: 18px; padding: 4px; line-height: 1;
+}
+.toast-close:hover { color: var(--text-primary); }
+@keyframes toastSlideIn {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+@keyframes toastSlideOut {
+    from { transform: translateX(0); opacity: 1; }
+    to { transform: translateX(100%); opacity: 0; }
+}
+
+/* ---- Modal ---- */
+.modal-overlay {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center;
+    z-index: 100;
+}
+.modal {
+    background: var(--bg-secondary); border-radius: 18px; padding: 24px;
+    border: 1px solid var(--border-color); box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    min-width: 380px; max-width: 540px;
+}
+.modal-title { font-size: 18px; font-weight: 600; margin-bottom: 16px; }
+.modal-btns { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
+
+/* ---- Form ---- */
+.form-group { margin-bottom: 8px; }
+.form-label { font-size: 14px; font-weight: 500; color: var(--text-secondary); margin-bottom: 4px; display: block; }
+.form-input {
+    width: 100%; background: var(--bg-secondary); border: 1px solid var(--border-color);
+    border-radius: 8px; padding: 8px 12px; font-size: 16px; color: var(--text-primary);
+    transition: all 0.2s ease; font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+}
+.form-input:focus { outline: none; border-color: var(--accent-primary); box-shadow: 0 0 0 2px rgba(66,165,245,0.15); }
+.form-input.invalid { border-color: var(--error-color); box-shadow: 0 0 0 2px rgba(239,68,68,0.12); }
+.form-error { min-height: 18px; margin-top: 5px; font-size: 12px; color: var(--error-color); }
+
+/* ---- Workspace Variable Table ---- */
+.var-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.var-table th {
+    padding: 8px 9px; text-align: left; color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-color); position: sticky; top: 0;
+    background: var(--bg-secondary); z-index: 1;
+}
+.var-table td { padding: 9px; border-bottom: 1px solid var(--border-color); }
+.var-row { cursor: pointer; transition: background 0.15s ease; }
+.var-row:hover, .var-row.selected { background: var(--bg-primary); }
+.var-row.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent-primary); }
+
+/* ---- Plot Modes ---- */
+.segmented-control {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px;
+    padding: 3px; border: 1px solid var(--border-color); border-radius: 9px;
+    background: var(--bg-secondary);
+}
+.segment-btn {
+    border: 0; border-radius: 7px; padding: 7px 6px; cursor: pointer;
+    background: transparent; color: var(--text-secondary); font-size: 13px;
+    font-weight: 600; transition: background 0.15s ease, color 0.15s ease;
+}
+.segment-btn:hover { background: var(--bg-primary); color: var(--text-primary); }
+.segment-btn.active { background: var(--accent-primary); color: white; }
+.subset-control { display: none; align-items: center; gap: 8px; margin-top: 9px; }
+.subset-control.show { display: flex; }
+.subset-control .form-input { width: 86px; padding: 5px 8px; font-size: 13px; }
+
+/* ---- Horizontal Chart Resize ---- */
+.chart-resize-handle {
+    height: 7px; flex: 0 0 7px; cursor: row-resize; position: relative;
+    background: transparent; z-index: 10;
+}
+.chart-resize-handle::after {
+    content: ''; position: absolute; left: 50%; top: 50%; width: 42px; height: 2px;
+    transform: translate(-50%, -50%); background: var(--border-color); border-radius: 1px;
+}
+.chart-resize-handle:hover, .chart-resize-handle.active { background: var(--accent-secondary); }
+.chart-resize-handle:hover::after, .chart-resize-handle.active::after { background: var(--accent-primary); }
+
+/* ---- Circular Chart Badges ---- */
+.chart-header-badges {
+    display: flex; gap: 10px; align-items: center; justify-content: center;
+    flex: 1; min-width: 0;
+}
+.badge-group { display: flex; gap: 8px; align-items: center; }
+.badge-separator {
+    width: 1px; height: 24px; background: var(--border-color); margin: 0 14px;
+}
+.chart-badge {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: var(--bg-secondary); border: 2px solid var(--border-color);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: all 0.2s ease;
+    box-shadow: 0 2px 8px var(--shadow-color); font-size: 18px;
+    color: var(--text-secondary);
+}
+.chart-badge:hover {
+    background: var(--accent-secondary); border-color: var(--accent-primary);
+    transform: scale(1.1);
+}
+.chart-badge.active {
+    background: var(--accent-primary); border-color: var(--accent-primary); color: white;
+}
+.chart-badge.disabled {
+    opacity: 0.35; cursor: default; pointer-events: none;
+}
+.chart-badge svg { width: 20px; height: 20px; fill: currentColor; display: block; }
+.chart-badge-small { width: 34px; height: 34px; font-size: 14px; }
+.sample-navigation { display: flex; align-items: center; gap: 4px; }
+
+/* ---- Help Modal Pagination ---- */
+.help-page { display: none; }
+.help-page.active { display: block; }
+.help-dots { display: flex; gap: 8px; justify-content: center; margin: 16px 0 8px; }
+.help-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--border-color); cursor: pointer;
+    transition: all 0.2s ease;
+}
+.help-dot.active { background: var(--accent-primary); width: 28px; border-radius: 5px; }
+
+/* ---- Divider ---- */
+.divider { height: 1px; background: var(--border-color); margin: 3px 0; }
+
+/* ---- Spinner ---- */
+.spinner {
+    width: 40px; height: 40px;
+    border: 4px solid var(--border-color);
+    border-top-color: var(--accent-primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---- Processing Lock ---- */
+.progress-overlay {
+    position: fixed; inset: 0; z-index: 300; display: flex; align-items: center;
+    justify-content: center; background: rgba(15, 23, 42, 0.34);
+}
+.progress-box {
+    width: min(420px, calc(100vw - 40px)); padding: 22px;
+    background: var(--bg-secondary); border: 1px solid var(--border-color);
+    border-radius: 14px; box-shadow: 0 16px 44px rgba(0,0,0,0.28);
+}
+.progress-title { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
+.progress-track { height: 7px; border-radius: 4px; background: var(--border-color); overflow: hidden; }
+.progress-fill {
+    width: 38%; height: 100%; border-radius: 4px; background: var(--accent-primary);
+    animation: indeterminateProgress 1.25s ease-in-out infinite;
+}
+@keyframes indeterminateProgress {
+    0% { transform: translateX(-120%); }
+    100% { transform: translateX(365%); }
+}
+
+@media (max-width: 760px) {
+    .controls-panel { width: 300px; min-width: 240px; padding: 10px; }
+    .chart-legend { gap: 7px; font-size: 11px; }
+    .modal { min-width: 0; width: calc(100vw - 28px); max-height: 88vh; overflow: auto; }
+}
+</style>
+</head>
+<body>
+
+<!-- Toast container -->
+<div class="toast-container" id="toast-container"></div>
+
+<!-- MAIN -->
+<div class="main-content">
+
+    <!-- LEFT PANEL -->
+    <div class="controls-panel" id="controls-panel">
+
+        <!-- Action Buttons -->
+        <div class="section">
+            <div class="section-title">Actions</div>
+            <div class="btn-row-3">
+                <button class="btn-primary btn-sm" id="btn-load" onclick="requestWorkspaceData()">Load Data</button>
+                <button class="btn-primary btn-sm" id="btn-apply" onclick="applySmoothing()" disabled>Apply</button>
+                <button class="btn-secondary btn-sm" id="btn-export" onclick="prepareExport()" disabled>Export</button>
+            </div>
+        </div>
+
+        <div class="post-load-controls" id="post-load-controls">
+
+        <!-- Lambda (log slider) -->
+        <div class="section">
+            <div class="section-title" style="text-transform:none;">&lambda; (Lambda) -- Smoothness</div>
+            <div class="param-box">
+                <div class="slider-group">
+                    <div class="slider-header">
+                        <span class="slider-label">Smoothness penalty</span>
+                        <div class="slider-controls">
+                            <input type="text" class="slider-value" id="val-lambda" value="1.00e+03">
+                            <div class="nudge-pair">
+                                <button class="btn-nudge" onclick="nudgeLambda(1)">&#9650;</button>
+                                <button class="btn-nudge" onclick="nudgeLambda(-1)">&#9660;</button>
+                            </div>
+                            <button class="btn-gear" onclick="openLambdaSettings()" title="Configure range">&#9881;&#65039;</button>
+                        </div>
+                    </div>
+                    <input type="range" id="slider-lambda" min="0" max="1" step="0.001" value="0.25" oninput="onLambdaSlider(this.value)">
+                    <div class="slider-ticks" id="ticks-lambda"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Data Info -->
+        <div class="section" id="data-info-section">
+            <div class="section-title">Data Info</div>
+            <div class="data-info-row">
+                <span class="data-info-label">Source</span>
+                <span class="data-info-value" id="info-source">--</span>
+            </div>
+            <div class="data-info-row">
+                <span class="data-info-label">Size</span>
+                <span class="data-info-value" id="info-size">-- x --</span>
+            </div>
+        </div>
+
+        <div class="section" id="plot-mode-section">
+            <div class="section-title">Result Plot</div>
+            <div class="segmented-control" role="group" aria-label="Result plot mode">
+                <button class="segment-btn active" id="plot-mean" onclick="requestPlotMode('mean')">Mean</button>
+                <button class="segment-btn" id="plot-subset" onclick="requestPlotMode('subset')">Subset</button>
+                <button class="segment-btn" id="plot-all" onclick="requestPlotMode('all')">All</button>
+            </div>
+            <div class="subset-control" id="subset-control">
+                <label class="form-label" for="subset-count" style="margin:0;">Spectra</label>
+                <input class="form-input" id="subset-count" type="number" min="1" step="1" value="50">
+                <button class="btn-secondary btn-sm" onclick="requestPlotMode('subset')">Update</button>
+            </div>
+        </div>
+
+        </div>
+
+    </div>
+
+    <!-- RESIZE HANDLE -->
+    <div class="resize-handle" id="resize-handle"></div>
+
+    <!-- RIGHT PANEL -->
+    <div class="charts-panel" id="charts-panel">
+
+        <!-- Preview Chart -->
+        <div class="chart-container" id="chart-preview">
+            <div class="chart-header">
+                <span class="chart-title">Preview (selected sample)</span>
+                <div class="chart-header-badges" id="chart-badges">
+                    <div class="badge-group">
+                        <div class="chart-badge chart-badge-small" onclick="resetZoom('preview')" title="Reset view">
+                            <svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+                        </div>
+                    </div>
+
+                    <!-- Legend -->
+                    <div class="chart-legend" id="preview-legend" style="display:none;margin-left:8px;">
+                        <div class="sample-navigation" aria-label="Sample selection">
+                            <div class="chart-badge chart-badge-small disabled" id="badge-prev-sample" onclick="stepSample(-1)" title="Previous sample">&#9664;</div>
+                            <div class="chart-badge chart-badge-small disabled" id="badge-sample-index" title="Current sample"><span id="sample-index-label">1/1</span></div>
+                            <div class="chart-badge chart-badge-small disabled" id="badge-next-sample" onclick="stepSample(1)" title="Next sample">&#9654;</div>
+                        </div>
+                        <div class="badge-separator"></div>
+                        <div class="legend-item"><div class="legend-swatch" id="swatch-original"></div><span>Original sample</span></div>
+                        <div class="legend-item"><div class="legend-swatch" id="swatch-smoothed"></div><span>Smoothed sample</span></div>
+                        <div class="legend-item" id="legend-all-spectra" style="display:none;"><div class="legend-swatch" id="swatch-all-spectra"></div><span>All spectra</span></div>
+                    </div>
+                </div>
+
+                <!-- + Menu (right-aligned) -->
+                <div class="dropdown" style="position:relative;flex-shrink:0;">
+                    <div class="chart-badge chart-badge-small" id="burger-btn" onclick="toggleBurgerMenu()" title="More options">
+                        <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                    </div>
+                    <div class="burger-menu" id="burger-menu">
+                        <div class="burger-toggle" onclick="toggleDarkMode()">
+                            <span>Dark mode</span><span class="check" id="chk-darkMode"></span>
+                        </div>
+                        <div class="burger-toggle" onclick="toggleShowAllSpectra()">
+                            <span>Show all spectra</span><span class="check" id="chk-showAllSpectra"></span>
+                        </div>
+                        <div class="dropdown-sep"></div>
+                        <div class="dropdown-item" onclick="showHelp(); closeBurger();">Help</div>
+                    </div>
+                </div>
+            </div>
+            <div class="chart-wrapper" id="preview-wrapper">
+                <canvas id="preview-canvas"></canvas>
+                <div class="chart-empty" id="preview-empty">
+                    <div class="chart-empty-icon">&#128200;</div>
+                    <div>Load spectral data to begin</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="chart-resize-handle" id="chart-resize" title="Resize charts"></div>
+
+        <!-- Result Chart -->
+        <div class="chart-container" id="chart-result">
+            <div class="chart-header">
+                <span class="chart-title">Result</span>
+                <div class="chart-header-right">
+                    <div class="chart-legend" id="result-legend" style="display:none;">
+                        <div class="legend-item"><div class="legend-swatch" id="swatch-result"></div><span>Smoothed spectra</span></div>
+                    </div>
+                </div>
+                <div class="chart-badge chart-badge-small" onclick="resetZoom('result')" title="Reset view">
+                    <svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+                </div>
+            </div>
+            <div class="chart-wrapper" id="result-wrapper">
+                <canvas id="result-canvas"></canvas>
+                <div class="chart-empty" id="result-empty">
+                    <div class="chart-empty-icon">&#9989;</div>
+                    <div>Apply smoothing to view result</div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<!-- STATUS BAR -->
+<div class="status-bar">
+    <div class="status-left">
+        <div class="status-indicator" id="status-indicator"></div>
+        <span id="status-message">Ready</span>
+    </div>
+</div>
+
+<script>
+/* ====================================================================
+   STATE
+   ==================================================================== */
+var htmlComponent = null;
+var lastTimestamp = -1;
+var bridgeStarted = false;
+
+/* Data */
+var wavelength = [];
+var originalMean = [];
+var smoothedMean = [];
+var originalSample = [];
+var smoothedSample = [];
+var nSamples = 0;
+var nChannels = 0;
+var currentSample = 1;
+var hasData = false;
+var dataRevision = 0;
+var allSpectra = [];
+var showAllSpectra = false;
+var showAllRequestPending = false;
+
+/* Result data (after apply) */
+var resultSpectra = [];
+var resultWavelengths = [];
+var hasResult = false;
+var currentPlotMode = 'mean';
+
+/* Request and processing state */
+var previewTimer = null;
+var previewLastSentAt = 0;
+var PREVIEW_THROTTLE_MS = 120;
+var previewRequestSequence = 0;
+var latestPreviewRequested = 0;
+var operationRequestSequence = 0;
+var latestApplyRequested = 0;
+var processingLocked = false;
+
+/* View state (null = auto-fit) */
+var previewView = null;
+var resultView = null;
+var panState = null;
+
+/* Lambda slider config (logarithmic: 10^min to 10^max) */
+var LAMBDA_LOG_MIN = -1;
+var LAMBDA_LOG_MAX = 9;
+var LAMBDA_NUDGE_STEP = 0.05;
+var sliderCfg = {
+    lambda: { min: -1, max: 9 }
+};
+
+/* Chart margins */
+var MARGIN = { top: 10, right: 16, bottom: 48, left: 72 };
+
+/* ====================================================================
+   THEME
+   ==================================================================== */
+function toggleDarkMode() {
+    document.body.classList.toggle('dark-mode');
+    var isDark = document.body.classList.contains('dark-mode');
+    localStorage.setItem('whittaker_darkMode', isDark);
+    var chk = document.getElementById('chk-darkMode');
+    if (chk) chk.textContent = isDark ? '\u2713' : '';
+    updateLegendSwatches();
+    renderAll();
+}
+
+function restoreDarkMode() {
+    if (localStorage.getItem('whittaker_darkMode') === 'true') {
+        document.body.classList.add('dark-mode');
+    }
+    var chk = document.getElementById('chk-darkMode');
+    if (chk) chk.textContent = document.body.classList.contains('dark-mode') ? '\u2713' : '';
+}
+
+function updateShowAllSpectraState(enabled, pending) {
+    showAllSpectra = !!enabled;
+    showAllRequestPending = !!pending;
+    var check = document.getElementById('chk-showAllSpectra');
+    if (check) check.textContent = showAllRequestPending ? '\u2026' : (showAllSpectra ? '\u2713' : '');
+    var legend = document.getElementById('legend-all-spectra');
+    if (legend) legend.style.display = showAllSpectra ? 'flex' : 'none';
+}
+
+function toggleShowAllSpectra() {
+    if (showAllRequestPending) return;
+    if (!hasData) {
+        setStatus('idle', 'Load spectral data before enabling Show all spectra.');
+        return;
+    }
+
+    if (showAllSpectra) {
+        allSpectra = [];
+        updateShowAllSpectraState(false, false);
+        previewView = null;
+        renderPreviewChart();
+        setStatus('success', 'Showing the selected sample only.');
+        sendAction('preview_plot_option', { mode: 'none' });
+        scheduleAutoPreview();
+        return;
+    }
+
+    updateShowAllSpectraState(false, true);
+    setStatus('processing', 'Loading all spectra for preview...');
+    sendAction('preview_plot_option', { mode: 'all' });
+}
+
+document.addEventListener('keydown', function(e) {
+    if (e.ctrlKey && e.key === 'd') {
+        e.preventDefault();
+        toggleDarkMode();
+    }
+});
+
+/* ====================================================================
+   BURGER MENU
+   ==================================================================== */
+function toggleBurgerMenu() {
+    var bm = document.getElementById('burger-menu');
+    var wasOpen = bm.classList.contains('show');
+    closeAllMenus();
+    if (!wasOpen) bm.classList.add('show');
+}
+
+function closeBurger() {
+    document.getElementById('burger-menu').classList.remove('show');
+}
+
+function closeAllMenus() {
+    var menus = document.querySelectorAll('.burger-menu');
+    for (var i = 0; i < menus.length; i++) menus[i].classList.remove('show');
+}
+
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('#burger-btn') && !e.target.closest('.burger-menu')) {
+        closeAllMenus();
+    }
+});
+
+/* ====================================================================
+   LAMBDA SLIDER (LOGARITHMIC: 10^min to 10^max)
+   ==================================================================== */
+function logPosToValue(pos) {
+    var cfg = sliderCfg.lambda;
+    var logVal = cfg.min + pos * (cfg.max - cfg.min);
+    return Math.pow(10, logVal);
+}
+
+function valueToLogPos(val) {
+    if (val <= 0) return 0;
+    var cfg = sliderCfg.lambda;
+    var logVal = Math.log10(val);
+    return (logVal - cfg.min) / (cfg.max - cfg.min);
+}
+
+function onLambdaSlider(pos) {
+    var val = logPosToValue(parseFloat(pos));
+    document.getElementById('val-lambda').value = fmtSci(val);
+    scheduleAutoPreview();
+}
+
+function nudgeLambda(dir) {
+    var cfg = sliderCfg.lambda;
+    var el = document.getElementById('val-lambda');
+    var val = parseSci(el.value);
+    if (!Number.isFinite(val) || val <= 0) val = 1e3;
+    var logVal = Math.log10(val) + dir * LAMBDA_NUDGE_STEP;
+    logVal = Math.max(cfg.min, Math.min(cfg.max, logVal));
+    val = Math.pow(10, logVal);
+    el.value = fmtSci(val);
+    document.getElementById('slider-lambda').value = valueToLogPos(val);
+    scheduleAutoPreview();
+}
+
+function syncLambdaFromInput() {
+    var cfg = sliderCfg.lambda;
+    var el = document.getElementById('val-lambda');
+    var val = parseSci(el.value);
+    if (!Number.isFinite(val) || val <= 0) {
+        scheduleAutoPreview();
+        return;
+    }
+    el.value = fmtSci(val);
+    document.getElementById('slider-lambda').value = Math.max(0, Math.min(1, valueToLogPos(val)));
+    scheduleAutoPreview();
+}
+
+function initLambdaTicks() {
+    updateLogTicks();
+}
+
+function updateLogTicks() {
+    var el = document.getElementById('ticks-lambda');
+    if (!el) return;
+    var cfg = sliderCfg.lambda;
+    var minExp = Math.ceil(cfg.min);
+    var maxExp = Math.floor(cfg.max);
+    var ticks = [];
+    var range = maxExp - minExp;
+    var step = Math.max(1, Math.round(range / 5));
+    for (var e = minExp; e <= maxExp; e += step) {
+        if (e === 0) ticks.push('1');
+        else if (e === 1) ticks.push('10');
+        else ticks.push('10<sup>' + e + '</sup>');
+    }
+    var lastExp = maxExp;
+    var lastLabel = lastExp === 0 ? '1' : lastExp === 1 ? '10' : '10<sup>' + lastExp + '</sup>';
+    if (ticks.length > 0 && ticks[ticks.length - 1] !== lastLabel) ticks.push(lastLabel);
+    el.innerHTML = ticks.map(function(t) { return '<span>' + t + '</span>'; }).join('');
+}
+
+function openLambdaSettings() {
+    var cfg = sliderCfg.lambda;
+    var actualMin = Math.pow(10, cfg.min);
+    var actualMax = Math.pow(10, cfg.max);
+    showSettingsModal('\u03BB (Lambda) Range', [
+        { label: 'Minimum value', id: 'modal-lmin', type: 'number', value: actualMin, step: 'any' },
+        { label: 'Maximum value', id: 'modal-lmax', type: 'number', value: actualMax.toFixed(0), step: 'any' }
+    ], function() {
+        var mn = parseFloat(document.getElementById('modal-lmin').value);
+        var mx = parseFloat(document.getElementById('modal-lmax').value);
+        if (isFinite(mn) && isFinite(mx) && mx > mn && mn > 0) {
+            cfg.min = Math.log10(mn);
+            cfg.max = Math.log10(mx);
+            LAMBDA_LOG_MIN = cfg.min;
+            LAMBDA_LOG_MAX = cfg.max;
+            var sl = document.getElementById('slider-lambda');
+            sl.min = 0; sl.max = 1;
+            sl.value = Math.max(0, Math.min(1, valueToLogPos(parseSci(document.getElementById('val-lambda').value))));
+            updateLogTicks();
+            return true;
+        }
+        showToast('warning', 'Invalid Range', 'Use finite positive values with the maximum above the minimum.');
+        return false;
+    });
+}
+
+/* ====================================================================
+   NUMBER FORMATTING
+   ==================================================================== */
+function fmtSci(v) {
+    if (v === 0) return '0';
+    return v.toExponential(2);
+}
+
+function parseSci(s) {
+    if (typeof s !== 'string' && typeof s !== 'number') return NaN;
+    var text = String(s).trim();
+    if (!text) return NaN;
+    return Number(text);
+}
+
+/* ====================================================================
+   SETTINGS MODAL
+   ==================================================================== */
+function showSettingsModal(title, fields, onApply) {
+    var ov = document.createElement('div');
+    ov.className = 'modal-overlay';
+    var md = document.createElement('div');
+    md.className = 'modal';
+    var html = '<div class="modal-title">' + title + '</div>';
+    for (var i = 0; i < fields.length; i++) {
+        var f = fields[i];
+        html += '<div class="form-group"><label class="form-label">' + f.label + '</label>' +
+            '<input class="form-input" type="' + f.type + '" id="' + f.id + '" value="' + f.value + '"' +
+            (f.min !== undefined ? ' min="'+f.min+'"' : '') +
+            (f.max !== undefined ? ' max="'+f.max+'"' : '') +
+            (f.step !== undefined ? ' step="'+f.step+'"' : '') +
+            '></div>';
+    }
+    html += '<div class="modal-btns">' +
+        '<button class="btn-secondary btn-sm" id="settings-modal-cancel">Cancel</button>' +
+        '<button class="btn-primary btn-sm" id="settings-modal-apply">Apply</button></div>';
+    md.innerHTML = html;
+    ov.appendChild(md);
+    document.body.appendChild(ov);
+    document.getElementById('settings-modal-cancel').onclick = function() { document.body.removeChild(ov); };
+    document.getElementById('settings-modal-apply').onclick = function() {
+        if (onApply() !== false) document.body.removeChild(ov);
+    };
+    ov.onclick = function(e) { if (e.target === ov) document.body.removeChild(ov); };
+}
+
+/* ====================================================================
+   READ CURRENT PARAMETERS
+   ==================================================================== */
+function getCurrentParams() {
+    var lambda = parseSci(document.getElementById('val-lambda').value);
+    return { lambda: lambda, sampleIndex: currentSample, showAll: showAllSpectra };
+}
+
+function validateCurrentParams(showMessage) {
+    var params = getCurrentParams();
+    var lambdaInput = document.getElementById('val-lambda');
+    var lambdaValid = Number.isFinite(params.lambda) && params.lambda > 0;
+
+    lambdaInput.classList.toggle('invalid', !lambdaValid);
+
+    if (!lambdaValid) {
+        if (showMessage) setStatus('error', 'Lambda must be finite and greater than zero.');
+        return null;
+    }
+    return params;
+}
+
+/* ====================================================================
+   AUTO-PREVIEW (debounced)
+   ==================================================================== */
+function scheduleAutoPreview() {
+    if (!hasData) return;
+    var hadResult = hasResult;
+    invalidateResultUI();
+    if (hadResult) sendAction('parameters_changed', { revision: dataRevision });
+    previewRequestSequence += 1;
+    latestPreviewRequested = previewRequestSequence;
+    var params = validateCurrentParams(true);
+    if (!params) return;
+
+    setStatus('processing', 'Updating preview...');
+    if (previewTimer) return;
+    var elapsed = Date.now() - previewLastSentAt;
+    var delay = Math.max(0, PREVIEW_THROTTLE_MS - elapsed);
+    previewTimer = setTimeout(function() {
+        previewTimer = null;
+        var current = validateCurrentParams(true);
+        if (!current || processingLocked || !hasData) return;
+        current.requestId = latestPreviewRequested;
+        current.revision = dataRevision;
+        previewLastSentAt = Date.now();
+        setStatus('processing', 'Computing preview...');
+        sendAction('preview', current);
+    }, delay);
+}
+
+function invalidateResultUI() {
+    smoothedMean = [];
+    smoothedSample = [];
+    if (hasResult) {
+        hasResult = false;
+        resultSpectra = [];
+        resultWavelengths = [];
+        resultView = null;
+        var emptyMessage = document.querySelector('#result-empty div:last-child');
+        if (emptyMessage) emptyMessage.textContent = 'Apply the current parameters to view result';
+        renderResultChart();
+    }
+    syncActionButtons();
+}
+
+/* ====================================================================
+   ACTIONS -> MATLAB
+   ==================================================================== */
+function sendAction(action, extra) {
+    if (!htmlComponent) return;
+    var payload = { action: action };
+    if (extra) {
+        for (var key in extra) {
+            if (Object.prototype.hasOwnProperty.call(extra, key)) payload[key] = extra[key];
+        }
+    }
+    htmlComponent.Data = payload;
+}
+
+function requestWorkspaceData() {
+    if (processingLocked) return;
+    setStatus('processing', 'Reading workspace variables...');
+    sendAction('load_data');
+}
+
+function applySmoothing() {
+    if (processingLocked || !hasData) return;
+    if (previewTimer) clearTimeout(previewTimer);
+    previewTimer = null;
+    var params = validateCurrentParams(true);
+    if (!params) return;
+    operationRequestSequence += 1;
+    latestApplyRequested = operationRequestSequence;
+    params.requestId = latestApplyRequested;
+    params.revision = dataRevision;
+    setStatus('processing', 'Applying smoothing...');
+    setProcessingLock(true, 'Applying Whittaker smoothing...');
+    sendAction('apply', params);
+}
+
+function prepareExport() {
+    if (processingLocked || !hasResult) return;
+    sendAction('prepare_export');
+}
+
+function requestPlotMode(option) {
+    var subsetControl = document.getElementById('subset-control');
+    subsetControl.classList.toggle('show', option === 'subset');
+    if (!hasResult || processingLocked) return;
+
+    var payload = { option: option, revision: dataRevision };
+    if (option === 'subset') {
+        var count = Number(document.getElementById('subset-count').value);
+        if (!Number.isInteger(count) || count < 1) {
+            showToast('warning', 'Invalid Subset', 'Subset size must be a positive integer.');
+            return;
+        }
+        payload.subsetN = count;
+    }
+    setStatus('processing', 'Updating result plot...');
+    sendAction('plot_option', payload);
+}
+
+/* ====================================================================
+   MATLAB RESPONSE HANDLER
+   ==================================================================== */
+function handleMatlabData(data) {
+    if (!data || typeof data !== 'object') return;
+    if (data.source !== 'matlab') return;
+    if (typeof data.timestamp !== 'number' || data.timestamp <= lastTimestamp) return;
+    lastTimestamp = data.timestamp;
+
+    if (data.action === 'payload_batch') {
+        var payloads = toPayloadList(data.payloads);
+        for (var index = 0; index < payloads.length; index++) {
+            dispatchMatlabPayload(payloads[index]);
+        }
+        return;
+    }
+    dispatchMatlabPayload(data);
+}
+
+function dispatchMatlabPayload(data) {
+    if (!data || typeof data !== 'object') return;
+    switch (data.action) {
+        case 'ready':
+            setStatus(data.statusType || 'success', data.statusMessage || 'Ready.');
+            break;
+        case 'show_variable_modal':
+            setStatus('success', 'Select a data matrix and optional x-axis.');
+            showVariableSelectionModal(data);
+            break;
+        case 'data_loaded':
+            onDataLoaded(data);
+            break;
+        case 'preview_result':
+            onPreviewUpdated(data);
+            break;
+        case 'apply_result':
+            if (data.requestId === undefined && hasResult) onPlotUpdated(data);
+            else onApplyCompleted(data);
+            break;
+        case 'show_export_modal':
+            showExportModal(data);
+            break;
+        case 'export_complete':
+            setProcessingLock(false);
+            setStatus(data.statusType || 'success', data.statusMessage || 'Export complete.');
+            showToast(data.toastType || 'success', data.toastTitle || 'Export Complete',
+                data.toastMessage || data.statusMessage || 'Smoothed data exported.');
+            break;
+        case 'preview_plot_data':
+            onPreviewPlotData(data);
+            break;
+        case 'preview_plot_disabled':
+            allSpectra = [];
+            updateShowAllSpectraState(false, false);
+            previewView = null;
+            renderPreviewChart();
+            if (data.statusMessage) setStatus(data.statusType || 'success', data.statusMessage);
+            break;
+        case 'preview_plot_unavailable':
+            allSpectra = [];
+            updateShowAllSpectraState(false, false);
+            previewView = null;
+            renderPreviewChart();
+            setStatus(data.statusType || 'warning', data.statusMessage || 'Dataset is too large to show safely.');
+            showToast('warning', 'Show All Unavailable', data.statusMessage || 'Dataset is too large to show safely.');
+            break;
+        case 'error':
+            if (!processingLocked && Number(data.requestId) > 0 &&
+                    Number(data.requestId) < latestPreviewRequested) return;
+            setProcessingLock(false);
+            if (data.resultInvalidated) invalidateResultUI();
+            syncActionButtons();
+            setStatus('error', data.message || data.statusMessage || 'Unknown error.');
+            showToast('error', data.toastTitle || 'Whittaker Smoother',
+                data.toastMessage || data.message || 'Unknown error.');
+            break;
+    }
+}
+
+function toPayloadList(raw) {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw !== 'object') return [];
+    if (Object.prototype.hasOwnProperty.call(raw, 'action')) return [raw];
+    return Object.keys(raw).map(function(key) { return raw[key]; });
+}
+
+function onDataLoaded(payload) {
+    setProcessingLock(false);
+    wavelength = toArray(payload.wavelength);
+    originalMean = toArray(payload.originalMean);
+    originalSample = toArray(payload.originalSample || payload.originalMean);
+    smoothedMean = [];
+    smoothedSample = [];
+    allSpectra = [];
+    updateShowAllSpectraState(false, false);
+    nSamples = Number(payload.nRows) || 0;
+    currentSample = Math.max(1, Math.min(nSamples || 1, Number(payload.sampleIndex) || 1));
+    nChannels = Number(payload.nCols) || 0;
+    dataRevision = Number(payload.dataRevision) || 0;
+    hasData = true;
+    hasResult = false;
+    resultSpectra = [];
+    resultWavelengths = [];
+    var resultEmptyMessage = document.querySelector('#result-empty div:last-child');
+    if (resultEmptyMessage) resultEmptyMessage.textContent = 'Apply smoothing to view result';
+
+    document.getElementById('post-load-controls').style.display = 'flex';
+    document.getElementById('info-source').textContent = payload.varName || 'inputData';
+    document.getElementById('info-size').textContent = nSamples + ' x ' + nChannels;
+    document.getElementById('subset-count').value = Math.max(1, Math.min(50, nSamples));
+    updateSampleNavigation();
+
+    if (Number.isFinite(Number(payload.lambda))) {
+        document.getElementById('val-lambda').value = fmtSci(Number(payload.lambda));
+        document.getElementById('slider-lambda').value = Math.max(0,
+            Math.min(1, valueToLogPos(Number(payload.lambda))));
+    }
+
+    activatePlotMode(payload.plotOption || 'mean');
+
+    previewView = null;
+    resultView = null;
+    updateLegendSwatches();
+    renderAll();
+    syncActionButtons();
+
+    var message = payload.statusMessage || ('Loaded ' + nSamples + ' x ' + nChannels + '.');
+    setStatus('success', message);
+    showToast('success', 'Data Loaded', message);
+    if (payload.plotNotice) showToast('warning', 'Plot Limited', payload.plotNotice, 5500);
+
+    scheduleAutoPreview();
+}
+
+function onPreviewPlotData(payload) {
+    allSpectra = parseMatrix(payload.spectra) || [];
+    updateShowAllSpectraState(allSpectra.length > 0, false);
+    if (payload.wavelength) wavelength = toArray(payload.wavelength);
+    if (allSpectra.length > 0) {
+        var index = Math.max(0, Math.min(allSpectra.length - 1, currentSample - 1));
+        originalSample = allSpectra[index].slice();
+    }
+    smoothedSample = [];
+    previewView = null;
+    renderPreviewChart();
+    setStatus(payload.statusType || 'success', payload.statusMessage || 'Showing all input spectra.');
+    scheduleAutoPreview();
+}
+
+function onPreviewUpdated(payload) {
+    if (Number(payload.dataRevision) !== dataRevision) return;
+    if (Number(payload.requestId) !== latestPreviewRequested) return;
+    if (payload.resultInvalidated) invalidateResultUI();
+    wavelength = toArray(payload.wavelength);
+    originalSample = toArray(payload.originalSample || payload.originalMean);
+    smoothedSample = toArray(payload.smoothedSample || payload.smoothedMean);
+    currentSample = Math.max(1, Math.min(nSamples || 1, Number(payload.sampleIndex) || currentSample));
+    updateSampleNavigation();
+    updateLegendSwatches();
+    renderPreviewChart();
+    setStatus('success', payload.statusMessage || 'Preview updated.');
+}
+
+function updateSampleNavigation() {
+    var total = nSamples || 1;
+    currentSample = Math.max(1, Math.min(total, currentSample || 1));
+    var label = document.getElementById('sample-index-label');
+    if (label) label.textContent = currentSample + '/' + total;
+    var prev = document.getElementById('badge-prev-sample');
+    var next = document.getElementById('badge-next-sample');
+    var index = document.getElementById('badge-sample-index');
+    if (prev) prev.classList.toggle('disabled', nSamples <= 1 || currentSample <= 1);
+    if (next) next.classList.toggle('disabled', nSamples <= 1 || currentSample >= nSamples);
+    if (index) index.classList.toggle('disabled', nSamples <= 1);
+}
+
+function stepSample(direction) {
+    if (nSamples <= 1 || processingLocked) return;
+    currentSample = Math.max(1, Math.min(nSamples, currentSample + direction));
+    updateSampleNavigation();
+    scheduleAutoPreview();
+}
+
+function onApplyCompleted(payload) {
+    if (Number(payload.dataRevision) !== dataRevision) return;
+    if (payload.requestId !== undefined && Number(payload.requestId) !== latestApplyRequested) return;
+    setProcessingLock(false);
+    wavelength = toArray(payload.wavelength);
+    originalSample = toArray(payload.originalSample || payload.originalMean);
+    smoothedSample = toArray(payload.smoothedSample || payload.smoothedMean);
+    currentSample = Math.max(1, Math.min(nSamples || 1, Number(payload.sampleIndex) || currentSample));
+    updateSampleNavigation();
+    resultSpectra = parseMatrix(payload.spectra) || [];
+    resultWavelengths = wavelength.slice();
+    hasResult = resultSpectra.length > 0;
+    var resultEmptyMessage = document.querySelector('#result-empty div:last-child');
+    if (resultEmptyMessage) resultEmptyMessage.textContent = 'Apply smoothing to view result';
+    activatePlotMode(payload.plotOption || 'mean');
+    resultView = null;
+    updateLegendSwatches();
+    renderAll();
+    syncActionButtons();
+    var message = payload.statusMessage || 'Smoothing applied.';
+    setStatus('success', message);
+    showToast('success', 'Smoothing Applied', message);
+    if (payload.plotNotice) showToast('warning', 'Plot Limited', payload.plotNotice, 5500);
+}
+
+function onPlotUpdated(payload) {
+    if (Number(payload.dataRevision) !== dataRevision || !hasResult) return;
+    resultSpectra = parseMatrix(payload.spectra) || [];
+    resultWavelengths = toArray(payload.wavelength);
+    activatePlotMode(payload.plotOption || currentPlotMode);
+    resultView = null;
+    renderResultChart();
+    setStatus('success', payload.statusMessage || 'Result plot updated.');
+    if (payload.plotNotice) showToast('warning', 'Plot Limited', payload.plotNotice, 5500);
+}
+
+function activatePlotMode(option) {
+    currentPlotMode = option;
+    var modes = ['mean', 'subset', 'all'];
+    for (var i = 0; i < modes.length; i++) {
+        document.getElementById('plot-' + modes[i]).classList.toggle('active', modes[i] === option);
+    }
+    document.getElementById('subset-control').classList.toggle('show', option === 'subset');
+    var legendLabel = document.querySelector('#result-legend span');
+    if (legendLabel) {
+        legendLabel.textContent = option === 'mean' ? 'Mean smoothed spectrum' :
+            (option === 'subset' ? 'Smoothed subset' : 'All smoothed spectra');
+    }
+}
+
+function syncActionButtons() {
+    document.getElementById('btn-load').disabled = processingLocked;
+    document.getElementById('btn-apply').disabled = processingLocked || !hasData;
+    document.getElementById('btn-export').disabled = processingLocked || !hasResult;
+}
+
+function setProcessingLock(active, title) {
+    processingLocked = active;
+    document.body.setAttribute('aria-busy', active ? 'true' : 'false');
+    var overlay = document.getElementById('progress-overlay');
+    if (active) {
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.className = 'progress-overlay';
+            overlay.id = 'progress-overlay';
+            var box = document.createElement('div');
+            box.className = 'progress-box';
+            var heading = document.createElement('div');
+            heading.className = 'progress-title';
+            heading.id = 'progress-title';
+            var track = document.createElement('div');
+            track.className = 'progress-track';
+            var fill = document.createElement('div');
+            fill.className = 'progress-fill';
+            track.appendChild(fill);
+            box.appendChild(heading);
+            box.appendChild(track);
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+        }
+        document.getElementById('progress-title').textContent = title || 'Processing...';
+    } else if (overlay) {
+        overlay.remove();
+    }
+    syncActionButtons();
+}
+
+function showVariableSelectionModal(payload) {
+    var variables = toObjectList(payload.variables);
+    var vectors = toObjectList(payload.vectors);
+    var overlay = createModalOverlay('workspace-selector');
+    var modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.style.width = 'min(680px, calc(100vw - 32px))';
+    modal.style.maxWidth = '680px';
+    modal.style.maxHeight = '86vh';
+    modal.style.display = 'flex';
+    modal.style.flexDirection = 'column';
+
+    var title = document.createElement('div');
+    title.className = 'modal-title';
+    title.textContent = 'Load Data from Workspace';
+    modal.appendChild(title);
+
+    var tableWrap = document.createElement('div');
+    tableWrap.style.cssText = 'overflow:auto;min-height:120px;border:1px solid var(--border-color);border-radius:8px;';
+    var table = document.createElement('table');
+    table.className = 'var-table';
+    var head = document.createElement('thead');
+    var headRow = document.createElement('tr');
+    ['','Variable','Size','Class'].forEach(function(label) {
+        var th = document.createElement('th');
+        th.textContent = label;
+        headRow.appendChild(th);
+    });
+    head.appendChild(headRow);
+    table.appendChild(head);
+    var body = document.createElement('tbody');
+    var selectedName = '';
+    var selectedColumns = 0;
+
+    function selectRow(row, variable) {
+        var rows = body.querySelectorAll('.var-row');
+        for (var index = 0; index < rows.length; index++) rows[index].classList.remove('selected');
+        row.classList.add('selected');
+        row.querySelector('input').checked = true;
+        selectedName = String(variable.name || '');
+        selectedColumns = Number(variable.cols) || 0;
+        updateAxisOptions();
+    }
+
+    for (var i = 0; i < variables.length; i++) {
+        (function(variable, rowIndex) {
+            var row = document.createElement('tr');
+            row.className = 'var-row';
+            var radioCell = document.createElement('td');
+            var radio = document.createElement('input');
+            radio.type = 'radio';
+            radio.name = 'workspace-matrix';
+            radioCell.appendChild(radio);
+            var nameCell = document.createElement('td');
+            nameCell.textContent = String(variable.name || '');
+            nameCell.style.fontWeight = '600';
+            var sizeCell = document.createElement('td');
+            sizeCell.textContent = String(variable.size || '');
+            var classCell = document.createElement('td');
+            classCell.textContent = String(variable.className || '');
+            row.appendChild(radioCell);
+            row.appendChild(nameCell);
+            row.appendChild(sizeCell);
+            row.appendChild(classCell);
+            row.onclick = function() { selectRow(row, variable); };
+            row.ondblclick = function() { selectRow(row, variable); loadSelected(); };
+            body.appendChild(row);
+            if (rowIndex === 0) setTimeout(function() { selectRow(row, variable); }, 0);
+        })(variables[i], i);
+    }
+    table.appendChild(body);
+    tableWrap.appendChild(table);
+    modal.appendChild(tableWrap);
+
+    var axisGroup = document.createElement('div');
+    axisGroup.className = 'form-group';
+    axisGroup.style.marginTop = '14px';
+    var axisLabel = document.createElement('label');
+    axisLabel.className = 'form-label';
+    axisLabel.textContent = 'X-axis vector';
+    var axisSelect = document.createElement('select');
+    axisSelect.className = 'form-input';
+    axisSelect.id = 'workspace-axis-select';
+    axisGroup.appendChild(axisLabel);
+    axisGroup.appendChild(axisSelect);
+    modal.appendChild(axisGroup);
+
+    function updateAxisOptions() {
+        axisSelect.innerHTML = '';
+        var indices = document.createElement('option');
+        indices.value = '';
+        indices.textContent = 'Column indices (1, 2, 3, ...)';
+        axisSelect.appendChild(indices);
+        for (var vectorIndex = 0; vectorIndex < vectors.length; vectorIndex++) {
+            var vector = vectors[vectorIndex];
+            if (Number(vector.length) !== selectedColumns) continue;
+            var option = document.createElement('option');
+            option.value = String(vector.name || '');
+            option.textContent = String(vector.name || '') + ' (' + vector.length + ')';
+            axisSelect.appendChild(option);
+        }
+    }
+
+    var buttons = document.createElement('div');
+    buttons.className = 'modal-btns';
+    var cancel = makeButton('Cancel', 'btn-secondary btn-sm');
+    var load = makeButton('Load', 'btn-primary btn-sm');
+    buttons.appendChild(cancel);
+    buttons.appendChild(load);
+    modal.appendChild(buttons);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    function loadSelected() {
+        if (!selectedName) return;
+        var actionPayload = { varName: selectedName };
+        if (axisSelect.value) actionPayload.xAxisVar = axisSelect.value;
+        overlay.remove();
+        setProcessingLock(true, 'Loading ' + selectedName + '...');
+        sendAction('load_variable', actionPayload);
+    }
+    cancel.onclick = function() { overlay.remove(); setStatus('success', 'Ready.'); };
+    load.onclick = loadSelected;
+    overlay.onclick = function(event) { if (event.target === overlay) cancel.onclick(); };
+}
+
+function showExportModal(payload) {
+    var existingNames = toArray(payload.existingNames).map(String);
+    var overlay = createModalOverlay('export-dialog');
+    var modal = document.createElement('div');
+    modal.className = 'modal';
+    var title = document.createElement('div');
+    title.className = 'modal-title';
+    title.textContent = 'Export to Workspace';
+    var dataGroup = document.createElement('div');
+    dataGroup.className = 'form-group';
+    var dataLabel = document.createElement('label');
+    dataLabel.className = 'form-label';
+    dataLabel.textContent = 'Smoothed data variable';
+    var dataInput = document.createElement('input');
+    dataInput.className = 'form-input';
+    dataInput.value = String(payload.suggestedDataName || payload.suggestedName || 'whittakerSmoothedData');
+    dataInput.maxLength = 63;
+    dataGroup.appendChild(dataLabel);
+    dataGroup.appendChild(dataInput);
+
+    var axisGroup = document.createElement('div');
+    axisGroup.className = 'form-group';
+    var axisLabel = document.createElement('label');
+    axisLabel.className = 'form-label';
+    axisLabel.textContent = 'X-axis variable';
+    var axisInput = document.createElement('input');
+    axisInput.className = 'form-input';
+    axisInput.value = String(payload.suggestedAxisName || 'whittakerWavelength');
+    axisInput.maxLength = 63;
+    axisGroup.appendChild(axisLabel);
+    axisGroup.appendChild(axisInput);
+
+    var error = document.createElement('div');
+    error.className = 'form-error';
+    var overwriteRow = document.createElement('label');
+    overwriteRow.style.cssText = 'display:none;align-items:center;gap:8px;font-size:13px;color:var(--text-secondary);margin-top:8px;';
+    var overwriteInput = document.createElement('input');
+    overwriteInput.type = 'checkbox';
+    var overwriteText = document.createElement('span');
+    overwriteText.textContent = 'Overwrite existing workspace variables';
+    overwriteRow.appendChild(overwriteInput);
+    overwriteRow.appendChild(overwriteText);
+    var buttons = document.createElement('div');
+    buttons.className = 'modal-btns';
+    var cancel = makeButton('Cancel', 'btn-secondary btn-sm');
+    var confirm = makeButton('Export', 'btn-primary btn-sm');
+    buttons.appendChild(cancel);
+    buttons.appendChild(confirm);
+    modal.appendChild(title);
+    modal.appendChild(dataGroup);
+    modal.appendChild(axisGroup);
+    modal.appendChild(overwriteRow);
+    modal.appendChild(error);
+    modal.appendChild(buttons);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    function validateName() {
+        var dataName = dataInput.value.trim();
+        var axisName = axisInput.value.trim();
+        var message = '';
+        var validPattern = /^[A-Za-z]\w*$/;
+        if (!validPattern.test(dataName) || dataName.length > 63 ||
+                !validPattern.test(axisName) || axisName.length > 63) {
+            message = 'Use valid MATLAB names beginning with a letter.';
+        } else if (dataName === axisName) {
+            message = 'Use different names for data and x-axis.';
+        }
+
+        var collision = existingNames.indexOf(dataName) >= 0 || existingNames.indexOf(axisName) >= 0;
+        overwriteRow.style.display = collision ? 'flex' : 'none';
+        if (!collision) overwriteInput.checked = false;
+        if (!message && collision && !overwriteInput.checked) {
+            message = 'Confirm overwrite or choose unused names.';
+        }
+        dataInput.classList.toggle('invalid', Boolean(message));
+        axisInput.classList.toggle('invalid', Boolean(message));
+        error.textContent = message;
+        confirm.disabled = Boolean(message);
+        return message ? null : {
+            dataName: dataName,
+            axisName: axisName,
+            allowOverwrite: overwriteInput.checked
+        };
+    }
+    dataInput.oninput = validateName;
+    axisInput.oninput = validateName;
+    overwriteInput.onchange = validateName;
+    cancel.onclick = function() { overlay.remove(); };
+    confirm.onclick = function() {
+        var names = validateName();
+        if (!names) return;
+        overlay.remove();
+        setProcessingLock(true, 'Exporting workspace variables...');
+        sendAction('do_export', names);
+    };
+    dataInput.onkeydown = function(event) { if (event.key === 'Enter' && !confirm.disabled) confirm.click(); };
+    axisInput.onkeydown = dataInput.onkeydown;
+    overlay.onclick = function(event) { if (event.target === overlay) cancel.click(); };
+    validateName();
+    dataInput.focus();
+    dataInput.select();
+}
+
+function createModalOverlay(name) {
+    var current = document.querySelector('.modal-overlay[data-modal="' + name + '"]');
+    if (current) current.remove();
+    var overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.dataset.modal = name;
+    return overlay;
+}
+
+function makeButton(label, className) {
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = className;
+    button.textContent = label;
+    return button;
+}
+
+function toObjectList(raw) {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === 'object' && Object.prototype.hasOwnProperty.call(raw, 'name')) return [raw];
+    if (typeof raw === 'object') {
+        return Object.keys(raw).map(function(key) { return raw[key]; });
+    }
+    return [];
+}
+
+/* ====================================================================
+   TOAST NOTIFICATIONS
+   ==================================================================== */
+function showToast(type, title, message, duration) {
+    duration = duration || 4000;
+    var container = document.getElementById('toast-container');
+    var toast = document.createElement('div');
+    toast.className = 'toast toast-' + type;
+
+    var icons = { success: 10003, error: 10007, info: 8505, warning: 9888 };
+    var icon = document.createElement('div');
+    icon.className = 'toast-icon';
+    icon.textContent = String.fromCharCode(icons[type] || 8226);
+    var content = document.createElement('div');
+    content.className = 'toast-content';
+    var heading = document.createElement('div');
+    heading.className = 'toast-title';
+    heading.textContent = String(title || '');
+    var body = document.createElement('div');
+    body.className = 'toast-message';
+    body.textContent = String(message || '');
+    var close = document.createElement('button');
+    close.className = 'toast-close';
+    close.type = 'button';
+    close.textContent = String.fromCharCode(215);
+    close.onclick = function() { toast.remove(); };
+    content.appendChild(heading);
+    content.appendChild(body);
+    toast.appendChild(icon);
+    toast.appendChild(content);
+    toast.appendChild(close);
+
+    container.appendChild(toast);
+
+    setTimeout(function() {
+        toast.style.animation = 'toastSlideOut 0.3s ease forwards';
+        setTimeout(function() { if (toast.parentElement) toast.remove(); }, 300);
+    }, duration);
+}
+
+/* ====================================================================
+   STATUS BAR
+   ==================================================================== */
+function setStatus(type, message) {
+    var ind = document.getElementById('status-indicator');
+    document.getElementById('status-message').textContent = message || '';
+    ind.className = 'status-indicator';
+    if (type === 'error') ind.classList.add('error');
+    else if (type === 'processing' || type === 'loading') ind.classList.add('processing');
+}
+
+/* ====================================================================
+   HELP MODAL
+   ==================================================================== */
+function showHelp() {
+    var ov = document.createElement('div');
+    ov.className = 'modal-overlay';
+    var md = document.createElement('div');
+    md.className = 'modal';
+    md.style.maxWidth = '520px';
+
+    var currentPage = 0;
+    var totalPages = 3;
+
+    var stepStyle = 'display:flex;gap:12px;align-items:flex-start;margin-bottom:10px;';
+    var stepBadge = 'width:28px;height:28px;border-radius:50%;background:var(--accent-primary);color:white;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;';
+
+    var pages = [
+        '<div style="font-size:15px;color:var(--text-secondary);line-height:1.7;">' +
+        '<div style="font-size:16px;font-weight:600;color:var(--text-primary);margin-bottom:12px;">Quick Start</div>' +
+        '<div style="' + stepStyle + '"><div style="' + stepBadge + '">1</div><div><b>Load Data</b> -- Click "Load Data" to select a spectral matrix from the MATLAB workspace.</div></div>' +
+        '<div style="' + stepStyle + '"><div style="' + stepBadge + '">2</div><div><b>Tune Smoothness</b> -- Adjust &lambda;. The second-difference preview updates continuously as you drag.</div></div>' +
+        '<div style="' + stepStyle + '"><div style="' + stepBadge + '">3</div><div><b>Apply</b> -- Click "Apply" to smooth every spectrum. Click "Export" to save results to the workspace.</div></div>' +
+        '</div>',
+
+        '<div style="font-size:15px;color:var(--text-secondary);line-height:1.7;">' +
+        '<div style="font-size:16px;font-weight:600;color:var(--text-primary);margin-bottom:12px;">Parameters</div>' +
+        '<div style="margin-bottom:14px;"><div style="font-weight:600;color:var(--text-primary);margin-bottom:4px;">&lambda; (Lambda) -- Smoothness Penalty</div><div>Controls how smooth the output is. <b>Larger values</b> produce smoother results. <b>Smaller values</b> keep more detail and follow the original signal more closely.</div><div style="font-size:13px;color:var(--text-tertiary);margin-top:4px;">Typical range: 10<sup>1</sup> to 10<sup>8</sup>. Use the nudge arrows for fine control.</div></div>' +
+        '<div><div style="font-weight:600;color:var(--text-primary);margin-bottom:4px;">Second-difference penalty</div><div>The smoother always penalizes curvature with the fixed second-difference operator D<sup>2</sup>. There is no alternate difference-order setting.</div></div>' +
+        '</div>',
+
+        '<div style="font-size:15px;color:var(--text-secondary);line-height:1.7;">' +
+        '<div style="font-size:16px;font-weight:600;color:var(--text-primary);margin-bottom:12px;">Shortcuts</div>' +
+        '<table style="width:100%;font-size:14px;border-collapse:collapse;">' +
+        '<tr><td style="padding:6px 0;font-weight:600;color:var(--text-primary);width:40%;">Ctrl + D</td><td style="padding:6px 0;">Toggle dark mode</td></tr>' +
+        '<tr><td style="padding:6px 0;border-top:1px solid var(--border-color);font-weight:600;color:var(--text-primary);">Mouse wheel</td><td style="padding:6px 0;border-top:1px solid var(--border-color);">Zoom in/out on chart</td></tr>' +
+        '<tr><td style="padding:6px 0;border-top:1px solid var(--border-color);font-weight:600;color:var(--text-primary);">Click + drag</td><td style="padding:6px 0;border-top:1px solid var(--border-color);">Pan across chart</td></tr>' +
+        '<tr><td style="padding:6px 0;border-top:1px solid var(--border-color);font-weight:600;color:var(--text-primary);">Double-click chart</td><td style="padding:6px 0;border-top:1px solid var(--border-color);">Reset zoom to fit all data</td></tr>' +
+        '</table></div>'
+    ];
+
+    function buildHTML() {
+        var h = '<div class="modal-title">Whittaker Smoother -- Help</div>';
+        for (var i = 0; i < totalPages; i++) {
+            h += '<div class="help-page' + (i === currentPage ? ' active' : '') + '" id="help-page-' + i + '">' + pages[i] + '</div>';
+        }
+        h += '<div class="help-dots">';
+        for (var i = 0; i < totalPages; i++) {
+            h += '<div class="help-dot' + (i === currentPage ? ' active' : '') + '" data-page="' + i + '"></div>';
+        }
+        h += '</div>';
+        h += '<div class="modal-btns">';
+        if (currentPage > 0) h += '<button class="btn-secondary btn-sm" id="help-prev">Previous</button>';
+        if (currentPage < totalPages - 1) h += '<button class="btn-primary btn-sm" id="help-next">Next</button>';
+        else h += '<button class="btn-primary btn-sm" id="help-close">Close</button>';
+        h += '</div>';
+        return h;
+    }
+
+    function render() {
+        md.innerHTML = buildHTML();
+        var dots = md.querySelectorAll('.help-dot');
+        for (var i = 0; i < dots.length; i++) {
+            dots[i].onclick = function() { currentPage = parseInt(this.dataset.page); render(); };
+        }
+        var prevBtn = document.getElementById('help-prev');
+        var nextBtn = document.getElementById('help-next');
+        var closeBtn = document.getElementById('help-close');
+        if (prevBtn) prevBtn.onclick = function() { currentPage--; render(); };
+        if (nextBtn) nextBtn.onclick = function() { currentPage++; render(); };
+        if (closeBtn) closeBtn.onclick = function() { ov.remove(); };
+    }
+
+    ov.appendChild(md);
+    document.body.appendChild(ov);
+    render();
+    ov.onclick = function(e) { if (e.target === ov) ov.remove(); };
+}
+
+/* ====================================================================
+   CANVAS 2D DRAWING UTILITIES
+   ==================================================================== */
+function getColors() {
+    var cs = getComputedStyle(document.body);
+    return {
+        spectrum: cs.getPropertyValue('--spectrum-color').trim(),
+        smoothed: cs.getPropertyValue('--smoothed-color').trim(),
+        result: cs.getPropertyValue('--result-color').trim(),
+        allSpectra: cs.getPropertyValue('--all-spectra-color').trim(),
+        grid: cs.getPropertyValue('--grid-color').trim(),
+        text: cs.getPropertyValue('--axis-text').trim()
+    };
+}
+
+function updateLegendSwatches() {
+    var c = getColors();
+    var s;
+    s = document.getElementById('swatch-original'); if (s) s.style.background = c.spectrum;
+    s = document.getElementById('swatch-smoothed'); if (s) s.style.background = c.smoothed;
+    s = document.getElementById('swatch-all-spectra'); if (s) s.style.background = c.allSpectra;
+    s = document.getElementById('swatch-result'); if (s) s.style.background = c.result;
+}
+
+function setupCanvas(canvasId) {
+    var canvas = document.getElementById(canvasId);
+    var rect = canvas.parentElement.getBoundingClientRect();
+    var dpr = window.devicePixelRatio || 1;
+    var w = Math.round(rect.width);
+    var h = Math.round(rect.height);
+    if (w < 10 || h < 10) return null;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    var ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    return { ctx: ctx, w: w, h: h };
+}
+
+function getDataRange(datasets) {
+    var mn = Infinity, mx = -Infinity;
+    for (var d = 0; d < datasets.length; d++) {
+        var arr = datasets[d];
+        for (var i = 0; i < arr.length; i++) {
+            if (arr[i] < mn) mn = arr[i];
+            if (arr[i] > mx) mx = arr[i];
+        }
+    }
+    if (mn === Infinity) { mn = 0; mx = 1; }
+    var pad = (mx - mn) * 0.05 || 0.1;
+    return { min: mn - pad, max: mx + pad };
+}
+
+function drawGrid(ctx, w, h, xMin, xMax, yMin, yMax, colors) {
+    var m = MARGIN;
+    var pw = w - m.left - m.right;
+    var ph = h - m.top - m.bottom;
+
+    ctx.strokeStyle = colors.grid;
+    ctx.lineWidth = 1;
+    var xTicks = makeNiceTicks(xMin, xMax, 7);
+    for (var i = 0; i < xTicks.length; i++) {
+        var xPx = m.left + (xTicks[i] - xMin) / (xMax - xMin || 1) * pw;
+        ctx.beginPath(); ctx.moveTo(xPx, m.top); ctx.lineTo(xPx, m.top + ph); ctx.stroke();
+    }
+    for (var j = 0; j <= 4; j++) {
+        var yPx = m.top + ph - ph * j / 4;
+        ctx.beginPath(); ctx.moveTo(m.left, yPx); ctx.lineTo(m.left + pw, yPx); ctx.stroke();
+    }
+
+    ctx.strokeStyle = colors.text;
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.3;
+    ctx.beginPath();
+    ctx.moveTo(m.left, m.top + ph); ctx.lineTo(m.left + pw, m.top + ph);
+    ctx.moveTo(m.left, m.top); ctx.lineTo(m.left, m.top + ph);
+    ctx.stroke();
+    ctx.globalAlpha = 1.0;
+
+    ctx.fillStyle = colors.text;
+    ctx.font = '13px -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    for (var i = 0; i < xTicks.length; i++) {
+        var xVal = xTicks[i];
+        ctx.fillText(formatAxis(xVal), m.left + (xVal - xMin) / (xMax - xMin || 1) * pw, m.top + ph + 5);
+    }
+
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    for (var j = 0; j <= 4; j++) {
+        var yVal = yMin + (yMax - yMin) * j / 4;
+        var lbl;
+        if (Math.abs(yVal) < 1000 && Math.abs(yVal) > 0.01) lbl = yVal.toFixed(2);
+        else lbl = yVal.toExponential(1);
+        ctx.fillText(lbl, m.left - 5, m.top + ph - ph * j / 4);
+    }
+
+    ctx.fillStyle = colors.text;
+    ctx.globalAlpha = 0.6;
+    ctx.font = '12px -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText('Channel', m.left + pw / 2, m.top + ph + 22);
+    ctx.globalAlpha = 1.0;
+
+    ctx.save();
+    ctx.fillStyle = colors.text;
+    ctx.globalAlpha = 0.6;
+    ctx.font = '12px -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.translate(12, m.top + ph / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText('Intensity', 0, 0);
+    ctx.restore();
+    ctx.globalAlpha = 1.0;
+
+    return { plotW: pw, plotH: ph };
+}
+
+function makeNiceTicks(minimum, maximum, targetCount) {
+    var low = Math.min(Number(minimum), Number(maximum));
+    var high = Math.max(Number(minimum), Number(maximum));
+    if (!Number.isFinite(low) || !Number.isFinite(high) || high === low) return [low];
+    var rawStep = (high - low) / Math.max(1, targetCount - 1);
+    var power = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    var scaled = rawStep / power;
+    var factor = scaled <= 1 ? 1 : (scaled <= 3 ? 2 : (scaled <= 5 ? 5 : 10));
+    var step = factor * power;
+    var first = Math.ceil(low / step - 1e-10) * step;
+    var last = Math.floor(high / step + 1e-10) * step;
+    var ticks = [];
+    for (var value = first; value <= last + step * 1e-9; value += step) {
+        ticks.push(Math.abs(value) < step * 1e-10 ? 0 : value);
+    }
+    if (low === 1 && high <= 100 && (ticks.length === 0 || ticks[0] !== 1)) ticks.unshift(1);
+    return ticks.length ? ticks : [low, high];
+}
+
+function formatAxis(value) {
+    if (!Number.isFinite(value)) return '--';
+    var magnitude = Math.abs(value);
+    if ((magnitude > 0 && magnitude < 0.001) || magnitude >= 10000) return value.toExponential(2);
+    if (magnitude >= 100) return value.toFixed(0);
+    if (magnitude >= 1) return value.toFixed(2).replace(/\.00$/, '');
+    return value.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+function drawLine(ctx, xData, yData, xMin, xMax, yMin, yMax, pw, ph, color, lw, dash) {
+    var m = MARGIN;
+    var xR = (xMax - xMin) || 1;
+    var yR = (yMax - yMin) || 1;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lw || 1.5;
+    if (dash) ctx.setLineDash(dash); else ctx.setLineDash([]);
+
+    var iStart = 0, iEnd = xData.length - 1;
+    var ascending = xData.length < 2 || xData[xData.length - 1] >= xData[0];
+    if (ascending) {
+        while (iStart < xData.length && xData[iStart] < xMin) iStart++;
+        while (iEnd >= 0 && xData[iEnd] > xMax) iEnd--;
+    } else {
+        while (iStart < xData.length && xData[iStart] > xMax) iStart++;
+        while (iEnd >= 0 && xData[iEnd] < xMin) iEnd--;
+    }
+    if (iStart > 0) iStart--;
+    if (iEnd < xData.length - 1) iEnd++;
+    var visibleCount = iEnd - iStart + 1;
+
+    var maxPoints = pw * 2;
+    ctx.beginPath();
+
+    if (visibleCount > maxPoints && visibleCount > 4) {
+        var bucketSize = visibleCount / (maxPoints / 2);
+        var started = false;
+        for (var b = 0; b < maxPoints / 2; b++) {
+            var bStart = iStart + Math.floor(b * bucketSize);
+            var bEnd = Math.min(iStart + Math.floor((b + 1) * bucketSize), iEnd + 1);
+            var minY = Infinity, maxY = -Infinity, minI = bStart, maxI = bStart;
+            for (var j = bStart; j < bEnd; j++) {
+                if (yData[j] < minY) { minY = yData[j]; minI = j; }
+                if (yData[j] > maxY) { maxY = yData[j]; maxI = j; }
+            }
+            var pts = minI < maxI ? [minI, maxI] : [maxI, minI];
+            for (var k = 0; k < 2; k++) {
+                var x = m.left + (xData[pts[k]] - xMin) / xR * pw;
+                var y = m.top + ph - (yData[pts[k]] - yMin) / yR * ph;
+                if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+            }
+        }
+    } else {
+        var started = false;
+        for (var i = iStart; i <= iEnd; i++) {
+            var x = m.left + (xData[i] - xMin) / xR * pw;
+            var y = m.top + ph - (yData[i] - yMin) / yR * ph;
+            if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+        }
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+}
+
+/* ====================================================================
+   CHART RENDERING
+   ==================================================================== */
+function getAutoView(chartType) {
+    if (chartType === 'preview') {
+        var allY = [originalSample];
+        if (smoothedSample.length > 0) allY.push(smoothedSample);
+        for (var row = 0; row < allSpectra.length; row++) allY.push(allSpectra[row]);
+        var yr = getDataRange(allY);
+        return {
+            xMin: Math.min(wavelength[0], wavelength[wavelength.length - 1]),
+            xMax: Math.max(wavelength[0], wavelength[wavelength.length - 1]),
+            yMin: yr.min,
+            yMax: yr.max
+        };
+    } else {
+        var datasets = [];
+        for (var i = 0; i < resultSpectra.length; i++) datasets.push(resultSpectra[i]);
+        if (datasets.length === 0) datasets.push([0, 1]);
+        var yr = getDataRange(datasets);
+        var wl = resultWavelengths.length > 0 ? resultWavelengths : wavelength;
+        return {
+            xMin: Math.min(wl[0], wl[wl.length - 1]),
+            xMax: Math.max(wl[0], wl[wl.length - 1]),
+            yMin: yr.min,
+            yMax: yr.max
+        };
+    }
+}
+
+function renderPreviewChart() {
+    var canvas = document.getElementById('preview-canvas');
+    var emptyEl = document.getElementById('preview-empty');
+    if (originalSample.length === 0) {
+        canvas.style.display = 'none';
+        emptyEl.style.display = 'flex';
+        document.getElementById('preview-legend').style.display = 'none';
+        return;
+    }
+    emptyEl.style.display = 'none';
+    canvas.style.display = 'block';
+    document.getElementById('preview-legend').style.display = 'flex';
+
+    var c = setupCanvas('preview-canvas');
+    if (!c) return;
+    var colors = getColors();
+    c.ctx.clearRect(0, 0, c.w, c.h);
+
+    var allY = [originalSample];
+    if (smoothedSample.length > 0) allY.push(smoothedSample);
+    for (var row = 0; row < allSpectra.length; row++) allY.push(allSpectra[row]);
+    var autoY = getDataRange(allY);
+    var view = previewView || {
+        xMin: Math.min(wavelength[0], wavelength[wavelength.length - 1]),
+        xMax: Math.max(wavelength[0], wavelength[wavelength.length - 1]),
+        yMin: autoY.min,
+        yMax: autoY.max
+    };
+    var layout = drawGrid(c.ctx, c.w, c.h, view.xMin, view.xMax, view.yMin, view.yMax, colors);
+
+    for (var row = 0; row < allSpectra.length; row++) {
+        drawLine(c.ctx, wavelength, allSpectra[row], view.xMin, view.xMax, view.yMin, view.yMax,
+            layout.plotW, layout.plotH, colors.allSpectra, 0.7);
+    }
+
+    /* Draw original (blue) */
+    drawLine(c.ctx, wavelength, originalSample, view.xMin, view.xMax, view.yMin, view.yMax, layout.plotW, layout.plotH, colors.spectrum, 1.5);
+
+    /* Draw smoothed (red, dashed) */
+    if (smoothedSample.length > 0) {
+        drawLine(c.ctx, wavelength, smoothedSample, view.xMin, view.xMax, view.yMin, view.yMax, layout.plotW, layout.plotH, colors.smoothed, 2, [6, 3]);
+    }
+}
+
+function renderResultChart() {
+    var canvas = document.getElementById('result-canvas');
+    var emptyEl = document.getElementById('result-empty');
+    if (!hasResult || resultSpectra.length === 0) {
+        canvas.style.display = 'none';
+        emptyEl.style.display = 'flex';
+        document.getElementById('result-legend').style.display = 'none';
+        return;
+    }
+    emptyEl.style.display = 'none';
+    canvas.style.display = 'block';
+    document.getElementById('result-legend').style.display = 'flex';
+
+    var c = setupCanvas('result-canvas');
+    if (!c) return;
+    var colors = getColors();
+    c.ctx.clearRect(0, 0, c.w, c.h);
+
+    var wl = resultWavelengths.length > 0 ? resultWavelengths : wavelength;
+    var datasets = resultSpectra;
+    var allY = [];
+    for (var i = 0; i < datasets.length; i++) allY.push(datasets[i]);
+    var autoY = getDataRange(allY);
+    var view = resultView || {
+        xMin: Math.min(wl[0], wl[wl.length - 1]),
+        xMax: Math.max(wl[0], wl[wl.length - 1]),
+        yMin: autoY.min,
+        yMax: autoY.max
+    };
+    var layout = drawGrid(c.ctx, c.w, c.h, view.xMin, view.xMax, view.yMin, view.yMax, colors);
+
+    var maxLines = Math.min(datasets.length, 200);
+    var step = Math.max(1, Math.floor(datasets.length / maxLines));
+    for (var i = 0; i < datasets.length; i += step) {
+        var lw = datasets.length <= 2 ? 1.5 : 0.8;
+        drawLine(c.ctx, wl, datasets[i], view.xMin, view.xMax, view.yMin, view.yMax, layout.plotW, layout.plotH, colors.result, lw);
+    }
+}
+
+function renderAll() {
+    renderPreviewChart();
+    renderResultChart();
+}
+
+/* ====================================================================
+   ZOOM / PAN
+   ==================================================================== */
+function handleWheel(e, chartType) {
+    e.preventDefault();
+    var data = (chartType === 'preview') ? originalSample : (resultSpectra.length > 0 ? resultSpectra[0] : []);
+    if (data.length === 0) return;
+
+    var view = (chartType === 'preview') ? previewView : resultView;
+    if (!view) view = getAutoView(chartType);
+
+    var factor = e.deltaY > 0 ? 1.15 : 0.87;
+    var canvasId = (chartType === 'preview') ? 'preview-canvas' : 'result-canvas';
+    var canvas = document.getElementById(canvasId);
+    var rect = canvas.getBoundingClientRect();
+    var pw = rect.width - MARGIN.left - MARGIN.right;
+    var ph = rect.height - MARGIN.top - MARGIN.bottom;
+    var fracX = Math.max(0, Math.min(1, (e.clientX - rect.left - MARGIN.left) / pw));
+    var fracY = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top - MARGIN.top) / ph));
+
+    var xAt = view.xMin + (view.xMax - view.xMin) * fracX;
+    var yAt = view.yMin + (view.yMax - view.yMin) * fracY;
+    var nxr = (view.xMax - view.xMin) * factor;
+    var nyr = (view.yMax - view.yMin) * factor;
+    var nv = {
+        xMin: xAt - nxr * fracX,
+        xMax: xAt + nxr * (1 - fracX),
+        yMin: yAt - nyr * fracY,
+        yMax: yAt + nyr * (1 - fracY)
+    };
+
+    if (chartType === 'preview') { previewView = nv; renderPreviewChart(); }
+    else { resultView = nv; renderResultChart(); }
+}
+
+function handleMouseDown(e, chartType) {
+    if (e.button !== 0) return;
+    var view = (chartType === 'preview') ? previewView : resultView;
+    if (!view) view = getAutoView(chartType);
+    panState = {
+        chart: chartType,
+        startX: e.clientX,
+        startY: e.clientY,
+        origView: JSON.parse(JSON.stringify(view))
+    };
+}
+
+function handleMouseMove(e) {
+    if (!panState) return;
+    var canvasId = (panState.chart === 'preview') ? 'preview-canvas' : 'result-canvas';
+    var canvas = document.getElementById(canvasId);
+    var rect = canvas.getBoundingClientRect();
+    var pw = rect.width - MARGIN.left - MARGIN.right;
+    var ph = rect.height - MARGIN.top - MARGIN.bottom;
+
+    var ov = panState.origView;
+    var dx = e.clientX - panState.startX;
+    var dy = e.clientY - panState.startY;
+    var xShift = -(dx / pw) * (ov.xMax - ov.xMin);
+    var yShift = (dy / ph) * (ov.yMax - ov.yMin);
+
+    var nv = {
+        xMin: ov.xMin + xShift,
+        xMax: ov.xMax + xShift,
+        yMin: ov.yMin + yShift,
+        yMax: ov.yMax + yShift
+    };
+
+    if (panState.chart === 'preview') { previewView = nv; renderPreviewChart(); }
+    else { resultView = nv; renderResultChart(); }
+}
+
+function handleMouseUp() {
+    panState = null;
+}
+
+function resetZoom(chartType) {
+    if (chartType === 'preview') { previewView = null; renderPreviewChart(); }
+    else { resultView = null; renderResultChart(); }
+}
+
+function bindChartEvents(wrapperId, chartType) {
+    var wrapper = document.getElementById(wrapperId);
+    wrapper.addEventListener('wheel', function(e) { handleWheel(e, chartType); }, { passive: false });
+    wrapper.addEventListener('mousedown', function(e) { handleMouseDown(e, chartType); });
+    wrapper.addEventListener('dblclick', function() { resetZoom(chartType); });
+}
+
+document.addEventListener('mousemove', function(e) { handleMouseMove(e); });
+document.addEventListener('mouseup', function() { handleMouseUp(); });
+
+/* ====================================================================
+   RESIZE HANDLE (panel divider)
+   ==================================================================== */
+var isResizing = false;
+
+function initResizeHandle() {
+    var handle = document.getElementById('resize-handle');
+    var panel = document.getElementById('controls-panel');
+
+    handle.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        isResizing = true;
+        handle.classList.add('active');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+    });
+
+    document.addEventListener('mousemove', function(e) {
+        if (!isResizing) return;
+        var newWidth = e.clientX;
+        if (newWidth < 220) newWidth = 220;
+        if (newWidth > 600) newWidth = 600;
+        panel.style.width = newWidth + 'px';
+        renderAll();
+    });
+
+    document.addEventListener('mouseup', function() {
+        if (isResizing) {
+            isResizing = false;
+            var h = document.getElementById('resize-handle');
+            if (h) h.classList.remove('active');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            renderAll();
+        }
+    });
+}
+
+function initChartResizeHandle() {
+    var handle = document.getElementById('chart-resize');
+    var preview = document.getElementById('chart-preview');
+    var result = document.getElementById('chart-result');
+    var resizing = false;
+    var startY = 0;
+    var previewHeight = 0;
+    var resultHeight = 0;
+
+    handle.addEventListener('mousedown', function(event) {
+        event.preventDefault();
+        resizing = true;
+        startY = event.clientY;
+        previewHeight = preview.getBoundingClientRect().height;
+        resultHeight = result.getBoundingClientRect().height;
+        handle.classList.add('active');
+        document.body.style.cursor = 'row-resize';
+        document.body.style.userSelect = 'none';
+    });
+
+    document.addEventListener('mousemove', function(event) {
+        if (!resizing) return;
+        var total = previewHeight + resultHeight;
+        var nextPreview = Math.max(130, Math.min(total - 130, previewHeight + event.clientY - startY));
+        preview.style.flex = '0 0 ' + nextPreview + 'px';
+        result.style.flex = '0 0 ' + (total - nextPreview) + 'px';
+        renderAll();
+    });
+
+    document.addEventListener('mouseup', function() {
+        if (!resizing) return;
+        resizing = false;
+        handle.classList.remove('active');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        renderAll();
+    });
+}
+
+/* ====================================================================
+   UTILITY
+   ==================================================================== */
+function toArray(obj) {
+    if (Array.isArray(obj)) return obj;
+    if (obj === null || typeof obj === 'undefined') return [];
+    if (typeof obj === 'string') return [obj];
+    if (typeof obj !== 'object') return [obj];
+    var arr = [];
+    var keys = Object.keys(obj);
+    for (var i = 0; i < keys.length; i++) arr.push(obj[keys[i]]);
+    return arr;
+}
+
+function parseMatrix(raw) {
+    if (!raw) return null;
+    if (Array.isArray(raw)) {
+        if (raw.length === 0) return null;
+        if (Array.isArray(raw[0])) return raw;
+        if (typeof raw[0] === 'object' && !Array.isArray(raw[0])) {
+            return raw.map(function(r) { return Object.values(r); });
+        }
+        return [raw];
+    }
+    if (typeof raw === 'object') {
+        var vals = Object.values(raw);
+        if (vals.length === 0) return null;
+        if (Array.isArray(vals[0])) return vals;
+        if (typeof vals[0] === 'object') {
+            return vals.map(function(r) { return Array.isArray(r) ? r : Object.values(r); });
+        }
+        return [vals];
+    }
+    return null;
+}
+
+/* ====================================================================
+   SETUP + POLLING
+   ==================================================================== */
+function setup(component) {
+    if (!component || bridgeStarted) return;
+    htmlComponent = component;
+    bridgeStarted = true;
+    setInterval(function() {
+        if (htmlComponent && htmlComponent.Data) handleMatlabData(htmlComponent.Data);
+    }, 150);
+    updateLegendSwatches();
+    renderAll();
+    setStatus('success', 'Interface ready');
+    sendAction('uiReady');
+}
+
+/* ====================================================================
+   INITIALIZATION
+   ==================================================================== */
+document.addEventListener('DOMContentLoaded', function() {
+    restoreDarkMode();
+
+    initLambdaTicks();
+
+    /* Set initial slider position for lambda = 1000 */
+    document.getElementById('slider-lambda').value = valueToLogPos(1000);
+
+    document.getElementById('val-lambda').addEventListener('change', function() { syncLambdaFromInput(); });
+
+    bindChartEvents('preview-wrapper', 'preview');
+    bindChartEvents('result-wrapper', 'result');
+
+    initResizeHandle();
+    initChartResizeHandle();
+
+    var resizeTimeout = null;
+    window.addEventListener('resize', function() {
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(function() { renderAll(); }, 150);
+    });
+
+    updateLegendSwatches();
+    renderAll();
+    syncActionButtons();
+
+    if (window.htmlComponent) setup(window.htmlComponent);
+});
+
+if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    setTimeout(function() {
+        if (window.htmlComponent) setup(window.htmlComponent);
+    }, 50);
+}
+</script>
+</body>
+</html>
